@@ -1,21 +1,18 @@
-# coding: utf-8
-
 require "eturem/base"
 
 module Eturem
-  class Ja < Base
-    
+  class En < Base
     @inspect_methods = {
-      NoMemoryError => :no_memory_error_inspect,
+#      NoMemoryError => :no_memory_error_inspect,
 #      ScriptError => :script_error_inspect,
-      LoadError => :load_error_inspect,
+#      LoadError => :load_error_inspect,
 #      NotImplementedError => :not_implemented_error_inspect,
-      SyntaxError => :syntax_error_inspect,
+#      SyntaxError => :syntax_error_inspect,
 #      SecurityError => :security_error_inspect,
 #      SignalException => :signal_exception_inspect,
 #      Interrupt => :interrupt_inspect,
 #      StandardError => :standard_error_inspect,
-      ArgumentError => :argument_error_inspect,
+#      ArgumentError => :argument_error_inspect,
 #      UncaughtThrowError => :uncaught_throw_error_inspect,
 #      EncodingError => :encoding_error_inspect,
 #      Encoding::CompatibilityError => :encoding_compatibility_error_inspect,
@@ -31,7 +28,7 @@ module Eturem
 #      ClosedQueueError => :closed_queue_error_inspect,
 #      LocalJumpError => :local_jump_error_inspect,
 #      Math::DomainError => :math_domain_error_inspect,
-      NameError => :name_error_inspect,
+#      NameError => :name_error_inspect,
 #      NoMethodError => :no_method_error_inspect,
 #      RangeError => :range_error_inspect,
 #      FloatDomainError => :float_domain_error_inspect,
@@ -122,7 +119,7 @@ module Eturem
 #      Errno::ENOCSI => :errno_enocsi_inspect,
 #      Errno::ENODATA => :errno_enodata_inspect,
 #      Errno::ENODEV => :errno_enodev_inspect,
-      Errno::ENOENT => :errno_enoent_inspect,
+#      Errno::ENOENT => :errno_enoent_inspect,
 #      Errno::ENOEXEC => :errno_enoexec_inspect,
 #      Errno::ENOKEY => :errno_enokey_inspect,
 #      Errno::ENOLCK => :errno_enolck_inspect,
@@ -190,137 +187,26 @@ module Eturem
 #      Errno::EXXX => :errno_exxx_inspect,
 #      Errno::NOERROR => :errno_noerror_inspect,
 #      ThreadError => :thread_error_inspect,
-      TypeError => :type_error_inspect,
-      ZeroDivisionError => :zero_division_error_inspect,
-      SystemStackError => :system_stack_error_inspect,
+#      TypeError => :type_error_inspect,
+#      ZeroDivisionError => :zero_division_error_inspect,
+#      SystemStackError => :system_stack_error_inspect,
       "sentinel" => nil
     }
     
     def prepare
       super
-      case @exception.class.to_s
-      when "DXRuby::DXRubyError"
-        @exception_s.force_encoding("sjis") if @exception_s.encoding == Encoding::ASCII_8BIT
-        @exception_s.encode!("UTF-8")
-      end
     end
     
     def traceback_most_recent_call_last
-      "エラー発生までの流れ:"
+      super
     end
     
     def location_inspect(location)
-      %["#{location.path}" #{location.lineno}行目: '#{location.label}']
+      super
     end
     
     def exception_inspect
-      return %[ファイル"#{@path}" #{@lineno}行目でエラーが発生しました。\n] + super.to_s
-    end
-    
-    def no_memory_error_inspect
-      "メモリを確保できませんでした。あまりにも大量のデータを作成していませんか？"
-    end
-    
-    def load_error_inspect
-      %[ファイル/ライブラリ "#{@exception.path}" が見つかりません。] +
-      %[ファイル/ライブラリ名を確認してください。]
-    end
-    
-    def syntax_error_inspect
-      if @unexpected.match(/^'(.)'$/)
-        highlight!(@script_lines[@lineno], Regexp.last_match(1), "\e[31m\e[4m")
-      elsif @unexpected.match(/^(?:keyword|modifier)_/)
-        highlight!(@script_lines[@lineno], Regexp.last_match.post_match, "\e[31m\e[4m")
-      end
-      unexpected = transform_syntax_error_keyword(@unexpected)
-      expected = @expected.split(/\s+or\s+/).map{ |ex| transform_syntax_error_keyword(ex) }
-      keywords = %w[if unless case while until for begin def class module do].select{ |keyword|
-        @script.index(keyword)
-      }.join(" / ")
-      keywords = keywords.empty? ? "ifなど" : "「#{keywords}」"
-      
-      if expected.join == "end-of-input"
-        ret = "構文エラーです。余分な#{unexpected}があります。"
-        ret += "#{keywords}と「end」の対応関係を確認してください。" if unexpected == "end"
-        return ret
-      elsif unexpected == "end-of-input"
-        ret = "（ただし、実際のエラーの原因はおそらくもっと前にあります。）\n" +
-              "構文エラーです。#{expected.join('または')}が足りません。"
-        ret += "#{keywords}に対応する「end」があるか確認してください。" if expected.include?("end")
-        return ret
-      end
-      return "構文エラーです。#{expected.join('または')}が来るべき場所に、" +
-             "#{unexpected}が来てしまいました。"
-    end
-    
-    def transform_syntax_error_keyword(keyword)
-      case keyword
-      when "end-of-input", "$end"
-        "end-of-input"
-      when /^(?:keyword|modifier)_/
-        Regexp.last_match.post_match
-      when "'\\n'"
-        "改行"
-      else
-        keyword
-      end
-    end
-    
-    def interrupt_inspect
-      "プログラムが途中で強制終了されました。"
-    end
-    
-    def argument_error_inspect
-      if @given
-        ret = "引数の数が正しくありません。「#{@method}」は本来"
-        case @expected
-        when "0"
-          ret += "引数が不要です"
-        when /^(\d+)\.\.(\d+)$/
-          ret += "#{Regexp.last_match(1)}～#{Regexp.last_match(2)}個の引数を取ります"
-        when /^(\d+)\+$/
-          ret += "#{Regexp.last_match(1)}個以上の引数を取ります"
-        end
-        if @given == 0
-          ret += "が、引数が１つも渡されていません。"
-        else
-          ret += "が、#{@given}個の引数が渡されています。"
-        end
-        return ret
-      else
-        return "「#{@method}」への引数の数が正しくありません。"
-      end
-    end
-    
-    def name_error_inspect
-      if @exception.name.to_s.encode("UTF-8").include?("　")
-        @output_lines = default_output_lines
-        return "スクリプト中に全角空白が混じっています。"
-      end
-      
-      ret = "#{@exception.is_a?(NoMethodError) ? "" : "変数/"}メソッド" +
-            "「\e[31m\e[4m#{@exception.name}\e[0m」は存在しません。"
-      if @did_you_mean
-        did_you_mean = @did_you_mean.map{ |d| "\e[33m#{d}\e[0m" }.join(" / ")
-        ret += "「#{did_you_mean}」の入力ミスではありませんか？"
-      end
-      return ret
-    end
-    
-    def errno_enoent_inspect
-      "ファイルアクセスに失敗しました。ファイルがありません。"
-    end
-    
-    def type_error_inspect
-      "「#{@method}」への引数のタイプ（型）が正しくありません。"
-    end
-    
-    def zero_division_error_inspect
-      "割る数が 0 での割り算はできません。"
-    end
-    
-    def system_stack_error_inspect
-      "システムスタックがあふれました。意図しない無限ループが生じている可能性があります。"
+      super
     end
     
     Eturem.eturem_class = self
