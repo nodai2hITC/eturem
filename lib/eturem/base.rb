@@ -1,14 +1,10 @@
 require "eturem/version"
 
 module Eturem
-  def self.eturem_class
-    @eturem_class
-  end
-  
-  def self.eturem_class=(klass)
-    @eturem_class = klass
-  end
-  
+  # load script and return eturem_exception if exception raised
+  # @param [String] file script file
+  # @return [Eturem::Base] if exception raised
+  # @return [nil] if exception did not raise
   def self.load(file)
     begin
       Kernel.load file
@@ -27,12 +23,21 @@ module Eturem
     return nil
   end
   
+  def self.eturem_class
+    @eturem_class
+  end
+  
+  def self.eturem_class=(klass)
+    @eturem_class = klass
+  end
+  
   class Base
     attr_reader :exception
     
     @@output_backtrace = true
     @@output_original  = true
     @@output_script    = true
+    @@use_coderay      = false
     @@max_backtrace    = 16
     @@before_line_num  = 2
     @@after_line_num   = 2
@@ -55,6 +60,10 @@ module Eturem
       @@output_script = value
     end
     
+    def self.use_coderay=(value)
+      @@use_coderay = value
+    end
+    
     def self.max_backtrace=(value)
       @@max_backtrace = value
     end
@@ -67,7 +76,6 @@ module Eturem
       @@after_line_num = value
     end
     
-    # prepare
     def initialize(exception)
       @exception   = exception
       @exception_s = exception.to_s
@@ -96,20 +104,71 @@ module Eturem
       prepare
     end
     
-    def load_script
-      @script = ""
-      if @path && File.exist?(@path)
-        @script = File.binread(@path)
-        encoding = "utf-8"
-        if @script.match(/\A(?:#!.*\R)?#.*coding *[:=] *(?<encoding>[^\s:]+)/)
-          encoding = Regexp.last_match(:encoding)
-        end
-        @script.force_encoding(encoding)
+    # output backtrace + error message + script
+    def output
+      output_backtrace if @@output_backtrace
+      error_message = exception_inspect
+      if error_message.to_s.empty?
+        puts original_exception_inspect
+      else
+        puts original_exception_inspect if @@output_original
+        puts error_message
       end
-      @script_lines = @script.lines
-      @script_lines.unshift("")
-      @output_lines = default_output_lines
+      output_script if @@output_script
     end
+    
+    def output_backtrace
+      return if @backtrace_locations.empty?
+      
+      puts traceback_most_recent_call_last
+      @backtrace_locations[0, @@max_backtrace].reverse.each_with_index do |location, i|
+        puts sprintf("%9d: %s", @backtrace_locations.size - i, location_inspect(location))
+      end
+    end
+    
+    def exception_inspect
+      inspect_methods = self.class.inspect_methods
+      inspect_methods.keys.reverse_each do |key|
+        case key
+        when Class
+          return public_send(inspect_methods[key]) if @exception.is_a? key
+        when String
+          return public_send(inspect_methods[key]) if @exception.class.to_s == key
+        end
+      end
+      return nil
+    end
+    
+    def original_exception_inspect
+      if @exception.is_a? SyntaxError
+        return @exception_s
+      else
+        location_str = "#{@path}:#{@lineno}:in `#{@label}'"
+        if @exception_s.match(/\A(?<first_line>.*?)\n/)
+          return "#{location_str}: #{Regexp.last_match(:first_line)} (#{@exception.class})\n" +
+            "#{Regexp.last_match.post_match}"
+        else
+          return "#{location_str}: #{@exception_s} (#{@exception.class})"
+        end
+      end
+    end
+    
+    def output_script
+      return if @script.empty?
+      
+      max_lineno_length = @output_lines.compact.max.to_s.length
+      @output_lines.each do |i|
+        if @lineno == i
+          puts sprintf("\e[0m => \e[1;34m%#{max_lineno_length}d\e[0m: %s", i, @script_lines[i])
+        elsif i
+          puts sprintf("\e[0m    \e[1;34m%#{max_lineno_length}d\e[0m: %s", i, @script_lines[i])
+        else
+          puts         "\e[0m    #{" " * max_lineno_length}  :"
+        end
+      end
+    end
+    
+    private
     
     def prepare
       case @exception
@@ -128,7 +187,7 @@ module Eturem
     end
     
     def prepare_name_error
-      highlight!(@script_lines[@lineno], @exception.name.to_s, "\e[31m\e[4m")
+      highlight!(@script_lines[@lineno], @exception.name.to_s, "\e[1;31m\e[4m")
       return unless @exception_s.match(/Did you mean\?/)
       @did_you_mean = Regexp.last_match.post_match.strip.scan(/\S+/)
       return if @script.empty?
@@ -137,7 +196,7 @@ module Eturem
       @did_you_mean.each do |name|
         index = @script_lines.index { |line| line.include?(name) }
         next unless index
-        highlight!(@script_lines[index], name, "\e[33m")
+        highlight!(@script_lines[index], name, "\e[1;33m")
         new_range.push(index)
       end
       new_range.sort!
@@ -169,29 +228,6 @@ module Eturem
       @method = @label
     end
     
-    # main
-    def output_error
-      output_backtrace if @@output_backtrace
-      error_message = exception_inspect
-      if error_message.to_s.empty?
-        puts original_exception_inspect
-      else
-        puts original_exception_inspect if @@output_original
-        puts error_message
-      end
-      output_script if @@output_script
-    end
-    
-    # backtrace
-    def output_backtrace
-      return if @backtrace_locations.empty?
-      
-      puts traceback_most_recent_call_last
-      @backtrace_locations[0, @@max_backtrace].reverse.each_with_index do |location, i|
-        puts sprintf("%9d: %s", @backtrace_locations.size - i, location_inspect(location))
-      end
-    end
-    
     def backtrace_locations_shift
       @label  = @backtrace_locations.first.label
       @path   = @backtrace_locations.first.path
@@ -207,48 +243,20 @@ module Eturem
       "from #{location.path}:#{location.lineno}:in `#{location.label}'"
     end
     
-    # exception
-    def exception_inspect
-      inspect_methods = self.class.inspect_methods
-      inspect_methods.keys.reverse_each do |key|
-        case key
-        when Class
-          return public_send(inspect_methods[key]) if @exception.is_a? key
-        when String
-          return public_send(inspect_methods[key]) if @exception.class.to_s == key
+    def load_script
+      @script = ""
+      if @path && File.exist?(@path)
+        @script = File.binread(@path)
+        encoding = "utf-8"
+        if @script.match(/\A(?:#!.*\R)?#.*coding *[:=] *(?<encoding>[^\s:]+)/)
+          encoding = Regexp.last_match(:encoding)
         end
+        @script.force_encoding(encoding)
       end
-      return nil
-    end
-    
-    def original_exception_inspect
-      if @exception.is_a? SyntaxError
-        return @exception_s
-      else
-        location_str = "#{@path}:#{@lineno}:in `#{@label}'"
-        if @exception_s.match(/\A(?<first_line>.*?)\n/)
-          return "#{location_str}: #{Regexp.last_match(:first_line)} (#{@exception.class})\n" +
-            "#{Regexp.last_match.post_match}"
-        else
-          return "#{location_str}: #{@exception_s} (#{@exception.class})"
-        end
-      end
-    end
-    
-    # script
-    def output_script
-      return if @script.empty?
-      
-      max_lineno_length = @output_lines.compact.max.to_s.length
-      @output_lines.each do |i|
-        if @lineno == i
-          puts sprintf(" => \e[34m%#{max_lineno_length}d:\e[0m %s", i, @script_lines[i])
-        elsif i
-          puts sprintf("    \e[34m%#{max_lineno_length}d:\e[0m %s", i, @script_lines[i])
-        else
-          puts         "    \e[34m#{" " * max_lineno_length}  :\e[0m"
-        end
-      end
+      @script = CodeRay.scan(@script, :ruby).terminal if @@use_coderay
+      @script_lines = @script.lines
+      @script_lines.unshift("")
+      @output_lines = default_output_lines
     end
     
     def highlight(str, keyword, color)
