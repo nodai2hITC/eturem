@@ -7,7 +7,7 @@ module Eturem
   # @return [nil] if exception did not raise
   def self.load(file)
     begin
-      Kernel.load file
+      Kernel.load(File.expand_path(file))
     rescue Exception => exception
       return @eturem_class.new(exception) unless exception.is_a? SystemExit
     end
@@ -81,7 +81,7 @@ module Eturem
       @exception_s = exception.to_s
       
       eturem_path = File.dirname(File.absolute_path(__FILE__))
-      @backtrace_locations = @exception.backtrace_locations.reject do |location|
+      @backtrace_locations = (@exception.backtrace_locations || []).reject do |location|
         path = File.absolute_path(location.path)
         path.start_with?(eturem_path) || path.end_with?("/rubygems/core_ext/kernel_require.rb")
       end
@@ -93,7 +93,7 @@ module Eturem
         end
       end
       
-      if @exception.is_a?(SyntaxError) && @exception_s.match(/\A(?<path>[^:]+?)\:(?<lineno>\d+)/)
+      if @exception.is_a?(SyntaxError) && @exception_s.match(/\A(?<path>.+?)\:(?<lineno>\d+)/)
         @path   = Regexp.last_match(:path)
         @lineno = Regexp.last_match(:lineno).to_i
       else
@@ -129,11 +129,10 @@ module Eturem
     def exception_inspect
       inspect_methods = self.class.inspect_methods
       inspect_methods.keys.reverse_each do |key|
-        case key
-        when Class
-          return public_send(inspect_methods[key]) if @exception.is_a? key
-        when String
-          return public_send(inspect_methods[key]) if @exception.class.to_s == key
+        if (key.is_a?(Class)  && @exception.is_a?(key)) || 
+           (key.is_a?(String) && @exception.class.to_s == key)
+          method = inspect_methods[key]
+          return method ? public_send(method) : nil
         end
       end
       return nil
@@ -181,9 +180,12 @@ module Eturem
     
     def prepare_syntax_error
       @unexpected = @exception_s.match(/unexpected (?<unexpected>(?:','|[^,])+)/) ?
-        Regexp.last_match(:unexpected) : "end-of-input"
+        Regexp.last_match(:unexpected) : nil
       @expected   = @exception_s.match(/[,\s]expecting (?<expected>\S+)/) ?
-        Regexp.last_match(:expected)   : "end-of-input"
+        Regexp.last_match(:expected)   : nil
+      if !@expected && @exception_s.match(/(?<invalid>(?:break|next|retry|redo|yield))/)
+        @invalid = Regexp.last_match(:invalid)
+      end
     end
     
     def prepare_name_error
@@ -244,7 +246,7 @@ module Eturem
     end
     
     def load_script
-      @script = ""
+      @script ||= ""
       if @path && File.exist?(@path)
         @script = File.binread(@path)
         encoding = "utf-8"

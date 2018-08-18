@@ -16,7 +16,7 @@ module Eturem
       #Interrupt => :interrupt_inspect,
       #StandardError => :standard_error_inspect,
       ArgumentError => :argument_error_inspect,
-      #UncaughtThrowError => :uncaught_throw_error_inspect,
+      UncaughtThrowError => nil,
       #EncodingError => :encoding_error_inspect,
       #Encoding::CompatibilityError => :encoding_compatibility_error_inspect,
       #Encoding::ConverterNotFoundError => :encoding_converter_not_found_error_inspect,
@@ -214,7 +214,11 @@ module Eturem
     end
     
     def exception_inspect
-      return %[ファイル"#{@path}" #{@lineno}行目でエラーが発生しました。\n] + super.to_s
+      if @path == "(eval)"
+        return %[eval 中の #{@lineno}行目でエラーが発生しました。\n] + super.to_s
+      else
+        return %[ファイル"#{@path}" #{@lineno}行目でエラーが発生しました。\n] + super.to_s
+      end
     end
     
     def no_memory_error_inspect
@@ -227,6 +231,13 @@ module Eturem
     end
     
     def syntax_error_inspect
+      if @invalid
+        highlight!(@script_lines[@lineno], @invalid, "\e[1;31m\e[4m")
+        return "#{@invalid} が不適切な場所にあります。"
+      end
+      
+      @unexpected ||= "end-of-input"
+      @expected   ||= "end-of-input"
       if @unexpected.match(/^'(.)'$/)
         highlight!(@script_lines[@lineno], Regexp.last_match(1), "\e[1;31m\e[4m")
       elsif @unexpected.match(/^(?:keyword|modifier)_/)
@@ -288,8 +299,12 @@ module Eturem
         end
         return ret
       else
-        return "「#{@method}」への引数の数が正しくありません。"
+        return "「#{@method}」への引数が正しくありません。"
       end
+    end
+    
+    def uncaught_throw_error_inspect
+      return ""
     end
     
     def name_error_inspect

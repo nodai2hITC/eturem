@@ -41,8 +41,9 @@ example1.rb:5: syntax error, unexpected end-of-input, expecting keyword_end
 Eturem を使用すると、次のようなエラー表示になります。
 
 ```
-ファイル"example1.rb" 5行目でエラーが発生しました。（ただし、エラーの原因はおそらくもっと前にあります。）
-構文エラーです。「end」が足りません。「if」に対応する「end」があるか確認してください。
+ファイル"example1.rb" 5行目でエラーが発生しました。
+（ただし、実際のエラーの原因はおそらくもっと前にあります。）
+構文エラーです。endが足りません。「if」に対応する「end」があるか確認してください。
     3:     puts "なんたらかんたら"
     4:   # 内側の if に対応する end を忘れてしまった！
  => 5: end
@@ -85,7 +86,7 @@ Eturem を使用すると、次のようなエラー表示になります。（�
 
 このように、エラー発生箇所周辺だけではなく、did_you_mean がサジェストしてくれた変数の使用行も同時に表示してくれるので、ミスをしたのが実は1行目であることに気付きやすくなるのではないでしょうか。
 
-### 例２：ArgumentError
+### 例３：ArgumentError
 
 ```ruby
 def foo(a, b)
@@ -102,7 +103,7 @@ Traceback (most recent call last):
 example3.rb:1:in `foo': wrong number of arguments (given 1, expected 2) (ArgumentError)
 ```
 
-このように、ArgumentError のエラー発生行は、メソッド定義行（この場合1行目）になってしまいます。しかし実際に ArgumentError が発生するときの原因は、メソッド定義部分ではなく、呼び出し部分ではないでしょうか？
+このように、ArgumentError のエラー発生行は、メソッド定義行（この場合1行目）になってしまいます。しかし実際に ArgumentError が発生するときの原因は、メソッド定義部分ではなく、呼び出し部分であることがほとんどではないでしょうか？
 
 この例の場合 Traceback に「from example3.rb:4」と表示されてはいますが、初心者にはやはりわかりにくいのではないかと思われます。
 
