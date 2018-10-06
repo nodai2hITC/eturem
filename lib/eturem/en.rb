@@ -208,9 +208,9 @@ module Eturem
     def exception_inspect
       super
     end
-    
-    Eturem.eturem_class = self
   end
+  
+  @eturem_class = En
 end
 
 require "eturem"

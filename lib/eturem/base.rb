@@ -7,28 +7,36 @@ module Eturem
   # @return [nil] if exception did not raise
   def self.load(file)
     begin
-      Kernel.load(File.expand_path(file))
+      Kernel.load(File.absolute_path(file))
     rescue Exception => exception
-      return @eturem_class.new(exception) unless exception.is_a? SystemExit
+      return @eturem_class.new(exception, file) unless exception.is_a? SystemExit
     end
     return nil
+  end
+  
+  def self.load_and_output(file, debug = false)
+    begin
+      Kernel.load(File.absolute_path(file))
+    rescue Exception => exception
+      begin
+        puts @eturem_class.new(exception, file).inspect unless exception.is_a? SystemExit
+      rescue Exception => e
+        raise debug ? e : exception
+      end
+    end
   end
   
   def self.eval(expr, bind = nil, fname = "(eval)", lineno = 1)
     begin
       bind ? Kernel.eval(expr, bind, fname, lineno) : Kernel.eval(expr)
     rescue Exception => exception
-      return @eturem_class.new(exception) unless exception.is_a? SystemExit
+      return @eturem_class.new(exception, fname) unless exception.is_a? SystemExit
     end
     return nil
   end
   
-  def self.eturem_class
-    @eturem_class
-  end
-  
-  def self.eturem_class=(klass)
-    @eturem_class = klass
+  def self.set_config(config)
+    @eturem_class.set_config(config)
   end
   
   class Base
@@ -48,35 +56,17 @@ module Eturem
       return @inspect_methods
     end
     
-    def self.output_backtrace=(value)
-      @@output_backtrace = value
+    def self.set_config(config)
+      @@output_backtrace = config[:output_backtrace] if config.has_key?(:output_backtrace)
+      @@output_original  = config[:output_original]  if config.has_key?(:output_original)
+      @@output_script    = config[:output_script]    if config.has_key?(:output_script)
+      @@use_coderay      = config[:use_coderay]      if config.has_key?(:use_coderay)
+      @@max_backtrace    = config[:max_backtrace]    if config.has_key?(:max_backtrace)
+      @@before_line_num  = config[:before_line_num]  if config.has_key?(:before_line_num)
+      @@after_line_num   = config[:after_line_num]   if config.has_key?(:after_line_num)
     end
     
-    def self.output_original=(value)
-      @@output_original = value
-    end
-    
-    def self.output_script=(value)
-      @@output_script = value
-    end
-    
-    def self.use_coderay=(value)
-      @@use_coderay = value
-    end
-    
-    def self.max_backtrace=(value)
-      @@max_backtrace = value
-    end
-    
-    def self.before_line_num=(value)
-      @@before_line_num = value
-    end
-    
-    def self.after_line_num=(value)
-      @@after_line_num = value
-    end
-    
-    def initialize(exception)
+    def initialize(exception, load_file)
       @exception   = exception
       @exception_s = exception.to_s
       
@@ -86,7 +76,12 @@ module Eturem
         path.start_with?(eturem_path) || path.end_with?("/rubygems/core_ext/kernel_require.rb")
       end
       @backtrace_locations.each do |location|
-        if $0 == location.path
+        if File.absolute_path(load_file) == location.path
+          if load_file == $0
+            def location.path
+              $0
+            end
+          end
           def location.label
             super.sub("<top (required)>", "<main>")
           end
@@ -104,26 +99,28 @@ module Eturem
       prepare
     end
     
-    # output backtrace + error message + script
-    def output
-      output_backtrace if @@output_backtrace
+    def inspect
+      str = ""
+      str = backtrace_inspect if @@output_backtrace
       error_message = exception_inspect
-      if error_message.to_s.empty?
-        puts original_exception_inspect
+      if error_message.empty?
+        str += original_exception_inspect
       else
-        puts original_exception_inspect if @@output_original
-        puts error_message
+        str += original_exception_inspect + "\n" if @@output_original
+        str += error_message + "\n"
       end
-      output_script if @@output_script
+      str += script_inspect if @@output_script
+      return str
     end
     
-    def output_backtrace
-      return if @backtrace_locations.empty?
+    def backtrace_inspect
+      return "" if @backtrace_locations.empty?
       
-      puts traceback_most_recent_call_last
+      str = traceback_most_recent_call_last + "\n"
       @backtrace_locations[0, @@max_backtrace].reverse.each_with_index do |location, i|
-        puts sprintf("%9d: %s", @backtrace_locations.size - i, location_inspect(location))
+        str += sprintf("%9d: %s\n", @backtrace_locations.size - i, location_inspect(location))
       end
+      return str
     end
     
     def exception_inspect
@@ -132,10 +129,10 @@ module Eturem
         if (key.is_a?(Class)  && @exception.is_a?(key)) || 
            (key.is_a?(String) && @exception.class.to_s == key)
           method = inspect_methods[key]
-          return method ? public_send(method) : nil
+          return method ? public_send(method) : ""
         end
       end
-      return nil
+      return ""
     end
     
     def original_exception_inspect
@@ -143,48 +140,33 @@ module Eturem
         return @exception_s
       else
         location_str = "#{@path}:#{@lineno}:in `#{@label}'"
-        if @exception_s.match(/\A(?<first_line>.*?)\n/)
-          return "#{location_str}: #{Regexp.last_match(:first_line)} (#{@exception.class})\n" +
-            "#{Regexp.last_match.post_match}"
-        else
-          return "#{location_str}: #{@exception_s} (#{@exception.class})"
-        end
+        @exception_s.match(/\A(?<first_line>.*)/)
+        return "#{location_str}: #{Regexp.last_match(:first_line)} (\e[4m#{@exception.class}\e[0m)" +
+               "#{Regexp.last_match.post_match.chomp}\n"
       end
     end
     
-    def output_script
-      return if @script.empty?
+    def script_inspect
+      return "" if @script.empty?
       
-      max_lineno_length = @output_lines.compact.max.to_s.length
-      @output_lines.each do |i|
-        if @lineno == i
-          puts sprintf("\e[0m => \e[1;34m%#{max_lineno_length}d\e[0m: %s", i, @script_lines[i])
-        elsif i
-          puts sprintf("\e[0m    \e[1;34m%#{max_lineno_length}d\e[0m: %s", i, @script_lines[i])
-        else
-          puts         "\e[0m    #{" " * max_lineno_length}  :"
-        end
+      str = ""
+      max_lineno_length = @output_lines.max.to_s.length
+      last_i = @output_lines.min - 1
+      @output_lines.sort.each do |i|
+        str += "\e[0m    #{' ' * max_lineno_length}  :\n" if last_i + 1 != i
+        str += @lineno == i ? "\e[0m => \e[1;34m" : "\e[0m    \e[1;34m"
+        str += sprintf("%#{max_lineno_length}d\e[0m: %s", i, @script_lines[i])
+        last_i = i
       end
+      return str
     end
     
     private
     
     def prepare
       case @exception
-      when SyntaxError   then prepare_syntax_error
       when NameError     then prepare_name_error
       when ArgumentError then prepare_argument_error
-      when TypeError     then prepare_type_error
-      end
-    end
-    
-    def prepare_syntax_error
-      @unexpected = @exception_s.match(/unexpected (?<unexpected>(?:','|[^,])+)/) ?
-        Regexp.last_match(:unexpected) : nil
-      @expected   = @exception_s.match(/[,\s]expecting (?<expected>\S+)/) ?
-        Regexp.last_match(:expected)   : nil
-      if !@expected && @exception_s.match(/(?<invalid>(?:break|next|retry|redo|yield))/)
-        @invalid = Regexp.last_match(:invalid)
       end
     end
     
@@ -194,23 +176,11 @@ module Eturem
       @did_you_mean = Regexp.last_match.post_match.strip.scan(/\S+/)
       return if @script.empty?
       
-      new_range = []
       @did_you_mean.each do |name|
         index = @script_lines.index { |line| line.include?(name) }
         next unless index
         highlight!(@script_lines[index], name, "\e[1;33m")
-        new_range.push(index)
-      end
-      new_range.sort!
-      before = new_range.select { |i| i < @output_lines.first }
-      after  = new_range.select { |i| i > @output_lines.last  }
-      unless before.empty?
-        @output_lines.unshift(nil) if before.last + 1 != @output_lines.first
-        @output_lines.unshift(*before)
-      end
-      unless after.empty?
-        @output_lines.push(nil) if @output_lines.last + 1 != after.first
-        @output_lines.push(*after)
+        @output_lines.push(index)
       end
     end
     
@@ -220,14 +190,6 @@ module Eturem
       backtrace_locations_shift
       load_script unless old_path == @path
       @output_lines = default_output_lines
-      if @exception_s.match(/given (?<given>\d+)\, expected (?<expected>[^)]+)/)
-        @given    = Regexp.last_match(:given).to_i
-        @expected = Regexp.last_match(:expected)
-      end
-    end
-    
-    def prepare_type_error
-      @method = @label
     end
     
     def backtrace_locations_shift
@@ -255,7 +217,10 @@ module Eturem
         end
         @script.force_encoding(encoding)
       end
-      @script = CodeRay.scan(@script, :ruby).terminal if @@use_coderay
+      if @@use_coderay
+        require "coderay" 
+        @script = CodeRay.scan(@script, :ruby).terminal
+      end
       @script_lines = @script.lines
       @script_lines.unshift("")
       @output_lines = default_output_lines
@@ -274,7 +239,7 @@ module Eturem
       to   = [@script_lines.size - 1, @lineno + @@after_line_num].min
       (from..to).to_a
     end
-    
-    Eturem.eturem_class = self
   end
+  
+  @eturem_class = Base
 end

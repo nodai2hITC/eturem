@@ -214,11 +214,10 @@ module Eturem
     end
     
     def exception_inspect
-      if @path == "(eval)"
-        return %[eval 中の #{@lineno}行目でエラーが発生しました。\n] + super.to_s
-      else
-        return %[ファイル"#{@path}" #{@lineno}行目でエラーが発生しました。\n] + super.to_s
-      end
+      error_message = super
+      error_message = "#{@exception_s} (#{@exception.class})" if error_message.empty?
+      return (@path == "(eval)" ? "eval 中の" : %[ファイル"#{@path}"]) +
+        " #{@lineno}行目でエラーが発生しました。\n" + error_message
     end
     
     def no_memory_error_inspect
@@ -231,37 +230,50 @@ module Eturem
     end
     
     def syntax_error_inspect
-      if @invalid
-        highlight!(@script_lines[@lineno], @invalid, "\e[1;31m\e[4m")
-        return "#{@invalid} が不適切な場所にあります。"
+      if @exception_s.match(/unexpected (?<unexpected>(?:','|[^,])+)/)
+        unexpected = transform_syntax_error_keyword(Regexp.last_match(:unexpected))
+        expecting = ["end-of-input"]
+        if @exception_s.match(/[,\s]expecting (?<expecting>\S+)/)
+          expecting = Regexp.last_match(:expecting).split(/\s+or\s+/).map do |exp|
+            transform_syntax_error_keyword(exp)
+          end
+        end
+        if unexpected.match(/^'(.)'$/)
+          highlight!(@script_lines[@lineno], Regexp.last_match(1), "\e[1;31m\e[4m")
+        elsif
+          highlight!(@script_lines[@lineno], unexpected, "\e[1;31m\e[4m")
+        end
+        
+        keywords = %w[if unless case while until for begin def class module do].select do |keyword|
+          @script.index(keyword)
+        end
+        keywords = "「#{keywords.join(' / ')}」"
+        keywords = "ifなど" if keywords == "「」"
+        if unexpected == "end-of-input"
+          ret = "（ただし、実際のエラーの原因はおそらくもっと前にあります。）\n" +
+                "構文エラーです。#{expecting.join('または')}が足りません。"
+          ret += "#{keywords}に対応する「end」があるか確認してください。" if expecting.include?("end")
+          return ret
+        elsif expecting.join == "end-of-input"
+          ret = "構文エラーです。余分な#{unexpected}があります。"
+          ret += "#{keywords}と「end」の対応関係を確認してください。" if unexpected == "end"
+          return ret
+        elsif !expecting.empty?
+          return "構文エラーです。#{expecting.join('または')}が来るべき場所に、" +
+                 "#{unexpected}が来てしまいました。"
+        end
+        return ""
+      elsif @exception_s.match(/Invalid (?<invalid>(?:break|next|retry|redo|yield))/)
+        invalid = Regexp.last_match(:invalid)
+        highlight!(@script_lines[@lineno], invalid, "\e[1;31m\e[4m")
+        return "#{invalid} が不適切な場所にあります。"
+      elsif @exception_s.match(/unterminated string meets end of file/)
+        return "「\"」「'」が閉じられていません。"
+      elsif @exception_s.match(/unterminated regexp meets end of file/)
+        return "「/」が閉じられていません。"
+      else
+        return ""
       end
-      
-      @unexpected ||= "end-of-input"
-      @expected   ||= "end-of-input"
-      if @unexpected.match(/^'(.)'$/)
-        highlight!(@script_lines[@lineno], Regexp.last_match(1), "\e[1;31m\e[4m")
-      elsif @unexpected.match(/^(?:keyword|modifier)_/)
-        highlight!(@script_lines[@lineno], Regexp.last_match.post_match, "\e[1;31m\e[4m")
-      end
-      unexpected = transform_syntax_error_keyword(@unexpected)
-      expected = @expected.split(/\s+or\s+/).map{ |ex| transform_syntax_error_keyword(ex) }
-      keywords = %w[if unless case while until for begin def class module do].select{ |keyword|
-        @script.index(keyword)
-      }.join(" / ")
-      keywords = keywords.empty? ? "ifなど" : "「#{keywords}」"
-      
-      if expected.join == "end-of-input"
-        ret = "構文エラーです。余分な#{unexpected}があります。"
-        ret += "#{keywords}と「end」の対応関係を確認してください。" if unexpected == "end"
-        return ret
-      elsif unexpected == "end-of-input"
-        ret = "（ただし、実際のエラーの原因はおそらくもっと前にあります。）\n" +
-              "構文エラーです。#{expected.join('または')}が足りません。"
-        ret += "#{keywords}に対応する「end」があるか確認してください。" if expected.include?("end")
-        return ret
-      end
-      return "構文エラーです。#{expected.join('または')}が来るべき場所に、" +
-             "#{unexpected}が来てしまいました。"
     end
     
     def transform_syntax_error_keyword(keyword)
@@ -282,20 +294,24 @@ module Eturem
     end
     
     def argument_error_inspect
-      if @given
+      if @exception_s.match(/given (?<given>\d+), expected (?<expected>[^)]+)/)
+        given    = Regexp.last_match(:given).to_i
+        expected = Regexp.last_match(:expected)
         ret = "引数の数が正しくありません。「#{@method}」は本来"
-        case @expected
+        case expected
         when "0"
           ret += "引数が不要です"
         when /^(\d+)\.\.(\d+)$/
           ret += "#{Regexp.last_match(1)}～#{Regexp.last_match(2)}個の引数を取ります"
         when /^(\d+)\+$/
           ret += "#{Regexp.last_match(1)}個以上の引数を取ります"
+        else
+          ret += "#{expected}個の引数を取ります"
         end
-        if @given == 0
+        if given == 0
           ret += "が、引数が１つも渡されていません。"
         else
-          ret += "が、#{@given}個の引数が渡されています。"
+          ret += "が、#{given}個の引数が渡されています。"
         end
         return ret
       else
@@ -328,7 +344,7 @@ module Eturem
     end
     
     def type_error_inspect
-      "「#{@method}」への引数のタイプ（型）が正しくありません。"
+      "「#{@label}」への引数のタイプ（型）が正しくありません。"
     end
     
     def zero_division_error_inspect
@@ -338,9 +354,9 @@ module Eturem
     def system_stack_error_inspect
       "システムスタックがあふれました。意図しない無限ループが生じている可能性があります。"
     end
-    
-    Eturem.eturem_class = self
   end
+  
+  @eturem_class = Ja
 end
 
 require "eturem"
