@@ -1,0 +1,2 @@
+# valid script
+"Hello, World!"

@@ -206,18 +206,19 @@ module Eturem
     end
     
     def traceback_most_recent_call_last
-      "エラー発生までの流れ:"
+      "Traceback（エラー発生までの流れを直前のものほど下に表示しています。）:"
     end
     
     def location_inspect(location)
-      %["#{location.path}" #{location.lineno}行目: '#{location.label}']
+      %<"#{location.path}" #{location.lineno}行目: '#{location.label}'>
     end
     
     def exception_inspect
       error_message = super
       error_message = "#{@exception_s} (#{@exception.class})" if error_message.empty?
-      return (@path == "(eval)" ? "eval 中の" : %[ファイル"#{@path}"]) +
-        " #{@lineno}行目でエラーが発生しました。\n" + error_message
+      return "\e[1;31m【エラー】\e[0m" + 
+        (@path == "(eval)" ? "eval 中の" : %<ファイル"#{@path}">) + 
+        " #{@lineno}行目：\n#{error_message}"
     end
     
     def no_memory_error_inspect
@@ -225,8 +226,8 @@ module Eturem
     end
     
     def load_error_inspect
-      %[ファイル/ライブラリ "#{@exception.path}" が見つかりません。] +
-      %[ファイル/ライブラリ名を確認してください。]
+      %<ファイル/ライブラリ "#{@exception.path}" が見つかりません。> +
+      %<ファイル/ライブラリ名を確認してください。>
     end
     
     def syntax_error_inspect
@@ -239,13 +240,13 @@ module Eturem
           end
         end
         if unexpected.match(/^'(.)'$/)
-          highlight!(@script_lines[@lineno], Regexp.last_match(1), "\e[1;31m\e[4m")
+          @decoration[@lineno] = [Regexp.last_match(1), "\e[1;31m\e[4m"]
         elsif
-          highlight!(@script_lines[@lineno], unexpected, "\e[1;31m\e[4m")
+          @decoration[@lineno] = [unexpected, "\e[1;31m\e[4m"]
         end
         
         keywords = %w[if unless case while until for begin def class module do].select do |keyword|
-          @script.index(keyword)
+          @script_lines.join.index(keyword)
         end
         keywords = "「#{keywords.join(' / ')}」"
         keywords = "ifなど" if keywords == "「」"
@@ -265,7 +266,7 @@ module Eturem
         return ""
       elsif @exception_s.match(/Invalid (?<invalid>(?:break|next|retry|redo|yield))/)
         invalid = Regexp.last_match(:invalid)
-        highlight!(@script_lines[@lineno], invalid, "\e[1;31m\e[4m")
+        @decoration[@lineno] = [invalid, "\e[1;31m\e[4m"]
         return "#{invalid} が不適切な場所にあります。"
       elsif @exception_s.match(/unterminated string meets end of file/)
         return "「\"」「'」が閉じられていません。"
@@ -300,18 +301,18 @@ module Eturem
         ret = "引数の数が正しくありません。「#{@method}」は本来"
         case expected
         when "0"
-          ret += "引数が不要です"
+          ret << "引数が不要です"
         when /^(\d+)\.\.(\d+)$/
-          ret += "#{Regexp.last_match(1)}～#{Regexp.last_match(2)}個の引数を取ります"
+          ret << "#{Regexp.last_match(1)}～#{Regexp.last_match(2)}個の引数を取ります"
         when /^(\d+)\+$/
-          ret += "#{Regexp.last_match(1)}個以上の引数を取ります"
+          ret << "#{Regexp.last_match(1)}個以上の引数を取ります"
         else
-          ret += "#{expected}個の引数を取ります"
+          ret << "#{expected}個の引数を取ります"
         end
         if given == 0
-          ret += "が、引数が１つも渡されていません。"
+          ret << "が、引数が１つも渡されていません。"
         else
-          ret += "が、#{given}個の引数が渡されています。"
+          ret << "が、#{given}個の引数が渡されています。"
         end
         return ret
       else
@@ -325,16 +326,21 @@ module Eturem
     
     def name_error_inspect
       if @exception.name.to_s.encode("UTF-8").include?("　")
-        load_script
-        highlight!(@script_lines[@lineno], @exception.name.to_s, "\e[1;31m\e[4m")
+        @decoration[@lineno] = [/　+/, "\e[1;31m\e[4m"]
         return "スクリプト中に全角空白が混じっています。"
+      end
+      
+      if @exception.receiver == nil
+        ret = "nil に対して #{@exception.name} というメソッドを呼び出そうとしています。\n"
+        ret << "変数の値/メソッドの返値が予期せず nil になっている可能性があります。"
+        return ret
       end
       
       ret = "#{@exception.is_a?(NoMethodError) ? "" : "変数/"}メソッド" +
             "「\e[1;31m\e[4m#{@exception.name}\e[0m」は存在しません。"
       if @did_you_mean
         did_you_mean = @did_you_mean.map{ |d| "\e[1;33m#{d}\e[0m" }.join(" / ")
-        ret += "「#{did_you_mean}」の入力ミスではありませんか？"
+        ret << "「#{did_you_mean}」の入力ミスではありませんか？"
       end
       return ret
     end
@@ -353,6 +359,21 @@ module Eturem
     
     def system_stack_error_inspect
       "システムスタックがあふれました。意図しない無限ループが生じている可能性があります。"
+    end
+    
+    def warning_message(file, line, warning)
+      message = super
+      case warning
+      when "found `= literal' in conditional, should be =="
+        original, script = message.split("\n", 2)
+        message = @@output_original ? "#{original}\n" : ""
+        message += "\e[1;31m【警告】\e[0m" +
+          (file == "(eval)" ? "eval 中の" : %<ファイル"#{file}">) +
+          " #{line}行目：\n" +
+          "条件式部分で「 = 」が使われています。「 == 」の間違いではありませんか？\n"
+        message += @@output_script ? script : "\n"
+      end
+      return message
     end
   end
   

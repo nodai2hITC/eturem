@@ -6,47 +6,80 @@ module Eturem
   # @return [Eturem::Base] if exception raised
   # @return [nil] if exception did not raise
   def self.load(file)
+    eturem = @eturem_class.new(file)
     begin
-      Kernel.load(File.absolute_path(file))
+      Kernel.load(file)
     rescue Exception => exception
-      return @eturem_class.new(exception, file) unless exception.is_a? SystemExit
+      raise exception if exception.is_a? SystemExit
+      eturem.exception = exception
     end
-    return nil
+    eturem.exception ? eturem : nil
   end
   
-  def self.load_and_output(file, debug = false)
+  def self.load_and_output(file, repl = nil, debug = false)
+    eturem = @eturem_class.new(file, true)
+    last_binding = nil
+    tp = TracePoint.trace(:raise) do |t|
+      last_binding = t.binding unless File.expand_path(t.path) == File.expand_path(__FILE__)
+    end
+    script = read_script(file)
     begin
-      Kernel.load(File.absolute_path(file))
+      TOPLEVEL_BINDING.eval(script, file, 1)
+      tp.disable
+      eturem.comeback_stderr
     rescue Exception => exception
+      tp.disable
+      eturem.comeback_stderr
+      raise exception if exception.is_a? SystemExit
+      repl ||= $eturem_repl
+      use_repl = repl && last_binding && exception.is_a?(StandardError)
       begin
-        puts @eturem_class.new(exception, file).inspect unless exception.is_a? SystemExit
+        eturem.exception = exception
+        $stderr.write eturem.inspect
       rescue Exception => e
-        raise debug ? e : exception
+        raise debug ? e : eturem.exception
       end
+      return unless use_repl
+      require repl
+      last_binding.public_send(repl)
     end
   end
   
   def self.eval(expr, bind = nil, fname = "(eval)", lineno = 1)
+    eturem = @eturem_class.new(fname)
     begin
       bind ? Kernel.eval(expr, bind, fname, lineno) : Kernel.eval(expr)
     rescue Exception => exception
-      return @eturem_class.new(exception, fname) unless exception.is_a? SystemExit
+      raise exception if exception.is_a? SystemExit
+      eturem.exception = exception
     end
-    return nil
+    return eturem.exception ? eturem : nil
   end
   
   def self.set_config(config)
     @eturem_class.set_config(config)
   end
   
+  def self.read_script(file)
+    script = nil
+    if File.exist?(file)
+      script = File.binread(file)
+      encoding = "utf-8"
+      if script.match(/\A(?:#!.*\R)?#.*coding *[:=] *(?<encoding>[^\s:]+)/)
+        encoding = Regexp.last_match(:encoding)
+      end
+      script.force_encoding(encoding)
+    end
+    return script
+  end
+  
   class Base
-    attr_reader :exception
+    attr_reader :exception, :backtrace_locations, :path, :lineno, :label
     
     @@output_backtrace = true
     @@output_original  = true
     @@output_script    = true
     @@use_coderay      = false
-    @@max_backtrace    = 16
     @@before_line_num  = 2
     @@after_line_num   = 2
     
@@ -61,31 +94,28 @@ module Eturem
       @@output_original  = config[:output_original]  if config.has_key?(:output_original)
       @@output_script    = config[:output_script]    if config.has_key?(:output_script)
       @@use_coderay      = config[:use_coderay]      if config.has_key?(:use_coderay)
-      @@max_backtrace    = config[:max_backtrace]    if config.has_key?(:max_backtrace)
       @@before_line_num  = config[:before_line_num]  if config.has_key?(:before_line_num)
       @@after_line_num   = config[:after_line_num]   if config.has_key?(:after_line_num)
     end
     
-    def initialize(exception, load_file)
+    def initialize(load_file, replace_stderr = false)
+      @load_file = load_file.encode("utf-8")
+      @scripts = {}
+      @decoration = {}
+      if replace_stderr
+        @stderr = $stderr
+        $stderr = self
+      end
+    end
+    
+    def exception=(exception)
       @exception   = exception
       @exception_s = exception.to_s
       
-      eturem_path = File.dirname(File.absolute_path(__FILE__))
+      eturem_path = File.dirname(File.expand_path(__FILE__))
       @backtrace_locations = (@exception.backtrace_locations || []).reject do |location|
-        path = File.absolute_path(location.path)
+        path = File.expand_path(location.path)
         path.start_with?(eturem_path) || path.end_with?("/rubygems/core_ext/kernel_require.rb")
-      end
-      @backtrace_locations.each do |location|
-        if File.absolute_path(load_file) == location.path
-          if load_file == $0
-            def location.path
-              $0
-            end
-          end
-          def location.label
-            super.sub("<top (required)>", "<main>")
-          end
-        end
       end
       
       if @exception.is_a?(SyntaxError) && @exception_s.match(/\A(?<path>.+?)\:(?<lineno>\d+)/)
@@ -95,30 +125,41 @@ module Eturem
         backtrace_locations_shift
       end
       
-      load_script
+      @script_lines = read_script(@path) || []
+      @output_linenos = default_output_linenos
       prepare
     end
     
     def inspect
-      str = ""
-      str = backtrace_inspect if @@output_backtrace
+      str = @@output_backtrace ? backtrace_inspect : ""
       error_message = exception_inspect
       if error_message.empty?
-        str += original_exception_inspect
+        str << original_exception_inspect
       else
-        str += original_exception_inspect + "\n" if @@output_original
-        str += error_message + "\n"
+        str = "#{original_exception_inspect}\n#{str}" if @@output_original
+        str << "#{error_message}\n"
       end
-      str += script_inspect if @@output_script
+      str << script_inspect if @@output_script
       return str
     end
     
     def backtrace_inspect
       return "" if @backtrace_locations.empty?
       
-      str = traceback_most_recent_call_last + "\n"
-      @backtrace_locations[0, @@max_backtrace].reverse.each_with_index do |location, i|
-        str += sprintf("%9d: %s\n", @backtrace_locations.size - i, location_inspect(location))
+      str = "#{traceback_most_recent_call_last}\n"
+      backtraces = []
+      size = @backtrace_locations.size
+      format = "%#{8 + size.to_s.length}d: %s\n"
+      @backtrace_locations.reverse.each_with_index do |location, i|
+        backtraces.push(sprintf(format, size - i, location_inspect(location)))
+      end
+      
+      if @exception_s == "stack level too deep"
+        str << backtraces[0..7].join
+        str << "         ... #{backtraces.size - 12} levels...\n"
+        str << backtraces[-4..-1].join
+      else
+        str << backtraces.join
       end
       return str
     end
@@ -137,7 +178,7 @@ module Eturem
     
     def original_exception_inspect
       if @exception.is_a? SyntaxError
-        return @exception_s
+        return "#{@exception_s.chomp}\n"
       else
         location_str = "#{@path}:#{@lineno}:in `#{@label}'"
         @exception_s.match(/\A(?<first_line>.*)/)
@@ -146,19 +187,43 @@ module Eturem
       end
     end
     
-    def script_inspect
-      return "" if @script.empty?
+    def script_inspect(path = @path, linenos = @output_linenos, lineno = @lineno, decoration = @decoration)
+      script_lines = read_script(path)
+      return "" unless script_lines
       
       str = ""
-      max_lineno_length = @output_lines.max.to_s.length
-      last_i = @output_lines.min - 1
-      @output_lines.sort.each do |i|
-        str += "\e[0m    #{' ' * max_lineno_length}  :\n" if last_i + 1 != i
-        str += @lineno == i ? "\e[0m => \e[1;34m" : "\e[0m    \e[1;34m"
-        str += sprintf("%#{max_lineno_length}d\e[0m: %s", i, @script_lines[i])
+      max_lineno_length = linenos.max.to_s.length
+      last_i = linenos.min - 1
+      linenos.uniq.sort.each do |i|
+        line = script_lines[i]
+        line = highlight(line, decoration[i][0], decoration[i][1]) if decoration[i]
+        str << "\e[0m    #{' ' * max_lineno_length}  :\n" if last_i + 1 != i
+        str << (lineno == i ? "\e[0m => \e[1;34m" : "\e[0m    \e[1;34m")
+        str << sprintf("%#{max_lineno_length}d\e[0m: %s\n", i, line)
         last_i = i
       end
       return str
+    end
+    
+    def write(*str)
+      message = nil
+      if str.join.force_encoding("utf-8").match(/^(.+?):(\d+):\s*warning:\s*/)
+        path, lineno, warning = $1, $2.to_i, $'.strip
+        message = warning_message(path, lineno, warning)
+      end
+      if message
+        @stderr.write(message)
+      else
+        @stderr.write(*str)
+      end
+    end
+    
+    def comeback_stderr
+      $stderr = @stderr || STDERR
+    end
+    
+    def to_s
+      @exception_s
     end
     
     private
@@ -171,25 +236,23 @@ module Eturem
     end
     
     def prepare_name_error
-      highlight!(@script_lines[@lineno], @exception.name.to_s, "\e[1;31m\e[4m")
       return unless @exception_s.match(/Did you mean\?/)
       @did_you_mean = Regexp.last_match.post_match.strip.scan(/\S+/)
-      return if @script.empty?
+      @decoration[@lineno] = [@exception.name.to_s, "\e[1;31m\e[4m"]
       
       @did_you_mean.each do |name|
         index = @script_lines.index { |line| line.include?(name) }
         next unless index
-        highlight!(@script_lines[index], name, "\e[1;33m")
-        @output_lines.push(index)
+        @decoration[index] = [name, "\e[1;33m"]
+        @output_linenos.push(index)
       end
     end
     
     def prepare_argument_error
       @method = @label
-      old_path = @path
       backtrace_locations_shift
-      load_script unless old_path == @path
-      @output_lines = default_output_lines
+      @script_lines = read_script(@path)
+      @output_linenos = default_output_linenos
     end
     
     def backtrace_locations_shift
@@ -207,37 +270,38 @@ module Eturem
       "from #{location.path}:#{location.lineno}:in `#{location.label}'"
     end
     
-    def load_script
-      @script ||= ""
-      if @path && File.exist?(@path)
-        @script = File.binread(@path)
-        encoding = "utf-8"
-        if @script.match(/\A(?:#!.*\R)?#.*coding *[:=] *(?<encoding>[^\s:]+)/)
-          encoding = Regexp.last_match(:encoding)
-        end
-        @script.force_encoding(encoding)
-      end
-      if @@use_coderay
-        require "coderay" 
-        @script = CodeRay.scan(@script, :ruby).terminal
-      end
-      @script_lines = @script.lines
-      @script_lines.unshift("")
-      @output_lines = default_output_lines
-    end
-    
-    def highlight(str, keyword, color)
-      str.to_s.gsub(keyword){ color + ($1 || $&) + "\e[0m" }
-    end
-    
-    def highlight!(str, keyword, color)
-      str.gsub!(keyword){ color + ($1 || $&) + "\e[0m" } if str
-    end
-    
-    def default_output_lines
+    def default_output_linenos
       from = [1, @lineno - @@before_line_num].max
       to   = [@script_lines.size - 1, @lineno + @@after_line_num].min
       (from..to).to_a
+    end
+    
+    def highlight(str, keyword, color)
+      str.to_s.gsub(keyword){ "#{color}#{$&}\e[0m" }
+    end
+    
+    def warning_message(file, line, warning)
+      case warning
+      when "found `= literal' in conditional, should be =="
+        "#{file}:#{line}: warning: #{warning}\n" +
+        script_inspect(file, [line], line, { line => [/(?<![><!=])=(?!=)/, "\e[1;31m\e[4m"] })
+      else
+        nil
+      end
+    end
+    
+    def read_script(file)
+      unless @scripts[file]
+        script = Eturem.read_script(file)
+        return nil unless script
+        script.encode!("utf-8")
+        if @@use_coderay
+          require "coderay" 
+          script = CodeRay.scan(script, :ruby).terminal
+        end
+        @scripts[file] = [""] + script.lines(chomp: true)
+      end
+      return @scripts[file]
     end
   end
   
