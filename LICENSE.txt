@@ -1,6 +1,6 @@
 The MIT License (MIT)
 
-Copyright (c) 2018 nodai2hITC
+Copyright (c) 2018-2020 nodai2hITC
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

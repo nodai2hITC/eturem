@@ -1,0 +1,15 @@
+#!/usr/bin/env ruby
+
+lang = nil
+if ARGV.first.to_s =~ /^lang=(.+)$/
+  lang = $1 
+  ARGV.shift
+end
+
+if ARGV.empty?
+  puts "usage: eturem (lang=**) script.rb"
+  exit
+end
+
+$PROGRAM_NAME = ARGV.shift
+require lang ? "eturem/#{lang}" : "eturem"

@@ -14,6 +14,10 @@ install it yourself as:
 
     $ ruby -returem <your_script.rb>
 
+or
+
+    $ eturem <your_script.rb>
+
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at https://github.com/nodai2hITC/eturem. This project is intended to be a safe, welcoming space for collaboration, and contributors are expected to adhere to the [Contributor Covenant](http://contributor-covenant.org) code of conduct.

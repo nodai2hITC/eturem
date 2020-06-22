@@ -12,6 +12,10 @@ Easy To Understand Ruby Error Message の略。
 
     $ ruby -returem/ja <your_script.rb>
 
+または
+
+    $ eturem lang=ja <your_script.rb>
+
 と使用すればよいのですが、最初に書いたとおり初心者が使用することを想定した gem ですので、そんなことを初心者に強いるのは酷というもの。だれか詳しい人が、事前に ```gem install eturem``` した上で、環境変数 RUBYOPT に ```-returem/ja``` を追加しておいてあげましょう。
 
 ## 使用するとどうなるか
@@ -129,7 +133,7 @@ Eturem を使用すると、次のようなエラー表示になります。
  => 2: puts "a" if a = 1
 ```
 
-現状「条件式内での = 使用」のみにしか対応していませんが、上記のように日本語での警告に加えて該当行を表示することができます。
+現状あまり多くの種類の警告に対応できてはいませんが、上記のように日本語での警告に加えて該当行を表示することができます。
 
 ### 例５：エラー発生時に自動で binding.irb
 
@@ -139,9 +143,33 @@ Eturem を使用すると、次のようなエラー表示になります。
 
 なお、この機能だけを切り出した gem「[autoirb](https://github.com/nodai2hITC/autoirb)」もあります。
 
+### その他細かなこと
+
+#### 全角空白・全角記号による NameError
+
+日本人ならきっと誰もがやったことがあり、そして意外と気付けない全角空白や全角記号によるエラー。通常の NameError の場合とは異なるメッセージでわかりやすくしています。（下の表示ではわかりませんが、実際には全角空白部分に下線が引かれています。）
+
+```
+【エラー】ファイル"example5.rb" 1行目：(NoMethodError)
+スクリプト中に全角空白が混じっています。
+ => 1: puts　"こんにちは世界"
+```
+
+#### 大文字・小文字を間違えた場合の NameError
+
+did_you_mean は、例えば `Time.now` と書くべきところを `time.now` と間違えて小文字で書いてしまった場合、 `Time` をサジェストしないようになっています。（サジェスト範囲を広げると誤反応が多くなるため、敢えてそうしているのだそうです。）
+
+とはいえ、初心者は大文字小文字が区別されるという意識が無く、つい小文字で入力してしまうことが少なからずあるように思えます。そこでスペルが同一で大文字小文字のみが異なる場合に限り、定数もサジェスト対象になるようにしています。
+
+```
+【エラー】ファイル"example6.rb" 1行目：(NameError)
+変数/メソッド「time」は存在しません。「Time」の入力ミスではありませんか？
+ => 1: start_time = time.now
+```
+
 ## .eturem ファイルによる設定
 
-HOME に「.eturem」というファイルを用意すると、詳細設定ができます。
+HOME またはカレントディレクトリに「.eturem」というファイルを用意すると、詳細設定ができます。（下の例の設定が、各項目を省略した際に使用される初期値です。）
 
 ```
 enable: true
@@ -150,6 +178,7 @@ lang: en
 output_backtrace: true
 output_original: true
 output_script: true
+override_warning: true
 use_coderay: false
 before_line_num: 2
 after_line_num: 2
@@ -157,13 +186,27 @@ repl: nil
 ```
 
 - enable: eturem の使用/不使用を切り替えます。
-- debug: eturem 自体をデバッグするための機能なので、使う必要はありません。
-- lang: 表示言語を切り替えます。ただし、`-returem/ja` のように言語を指定して使用した場合、この設定よりもそちらが優先されます。
+- debug: eturem 自体をデバッグするための機能なので、通常は使う必要はありません。
+- lang: 表示言語を切り替えます。ただし `-returem/ja` のように言語を指定して使用した場合、この設定よりもそちらが優先されます。
 - output_backtrace: バックトレース表示の有無を切り替えます。
 - output_original: Ruby 本来のエラーメッセージの表示の有無を切り替えます。
 - output_script: エラーの起きた個所のスクリプト表示の有無を切り替えます。
+- override_warning: 警告に対してもわかりやすいメッセージを表示するかを設定します。
 - before_line_num / after_line_num: スクリプト表示の際、エラー行の前後何行を表示するかを設定します。
-- repl: irb または pry と書いておくと、エラー発生時に binding.irb / binding.pry します。
+- repl: irb または pry と書いておくと、エラー発生時に自動的に binding.irb / binding.pry します。
+
+## 簡単な仕組み
+
+```ruby
+begin
+  load($PROGRAM_NAME)
+rescue Exception => e
+  # エラー表示処理
+end
+exit
+```
+
+実際はもう少しいろいろやっていますが、このように本来のスクリプト実行が始まる前に `-returem` オプションで eturem を呼び出し、そこから `load` でスクリプトを実行しているのがポイントです。これにより、SyntaxError 等も取得できるようになっています。
 
 ## Contributing
 
