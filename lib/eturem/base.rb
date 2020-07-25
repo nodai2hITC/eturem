@@ -115,12 +115,11 @@ module Eturem
 
 
     def eturem_prepare
-      this_filepath = File.expand_path(__FILE__)
-      @eturem_backtrace_locations = self.backtrace_locations || []
-      index = @eturem_backtrace_locations.index do |location|
-        File.expand_path(location.path) == this_filepath
+      this_dirpath = File.dirname(File.expand_path(__FILE__))
+      @eturem_backtrace_locations = (self.backtrace_locations || []).reject do |location|
+        File.expand_path(location.path).start_with?(this_dirpath) ||
+        location.path.end_with?("/rubygems/core_ext/kernel_require.rb")
       end
-      @eturem_backtrace_locations = @eturem_backtrace_locations[0...index] if index
 
       program_filepath = File.expand_path(Eturem.program_name)
       @eturem_backtrace_locations.each do |location|
