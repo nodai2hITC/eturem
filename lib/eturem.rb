@@ -36,6 +36,23 @@ if enable
   Eturem::Base.before_line_num  = before_line_num
   Eturem::Base.after_line_num   = after_line_num
 
+  if File.exist?($PROGRAM_NAME)
+    program_file = File.open($PROGRAM_NAME, "rb")
+    script = program_file.read
+    if script.match(/^__END__\R/)
+      program_file.pos = Regexp.last_match.end(0)
+      encoding = "utf-8"
+      if script.match(/\A(?:#!.*\R)?#.*coding *[:=] *(?<encoding>[^\s:]+)/)
+        encoding = Regexp.last_match(:encoding)
+      end
+      program_file.set_encoding(encoding)
+      Object.const_set(:DATA, program_file)
+      program_file
+    else
+      program_file.close
+    end
+  end
+
   eturem_path = File.expand_path("..", __FILE__)
   last_binding = nil
   tracepoint = TracePoint.trace(:raise) do |tp|
