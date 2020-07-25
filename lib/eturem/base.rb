@@ -266,7 +266,7 @@ module Eturem
 
     def eturem_prepare()
       @eturem_corrections = self.respond_to?(:corrections) ? self.corrections : []
-      @eturem_corrections += Object.constants.select do |const|
+      @eturem_corrections += Object.constants.map(&:to_s).select do |const|
         const.casecmp?(self.name)
       end
       @eturem_corrections.uniq!
