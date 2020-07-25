@@ -10,7 +10,7 @@ class EturemJaTest < Minitest::Test
   end
 
   def setup
-    Eturem::Base.output_backtrace = true
+    Eturem::Base.output_backtrace = false
     Eturem::Base.output_original  = false
     Eturem::Base.output_script    = true
     Eturem::Base.use_coderay      = false
