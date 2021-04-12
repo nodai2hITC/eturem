@@ -1,3 +1,5 @@
+# coding: utf-8
+
 require "eturem/base"
 Dir[File.expand_path("..", __FILE__) + "/*.rb"].each do |path|
   require path unless path == File.expand_path(__FILE__)

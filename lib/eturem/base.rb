@@ -120,7 +120,7 @@ module Eturem
         File.expand_path(location.path).start_with?(this_dirpath) ||
         location.path.end_with?(
           "/rubygems/core_ext/kernel_require.rb",
-          "/rubygems/core_ext/kernel_require.rb"
+          "/rubygems/core_ext/kernel_require.rb>"
         )
       end
 
