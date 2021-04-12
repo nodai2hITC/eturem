@@ -118,7 +118,10 @@ module Eturem
       this_dirpath = File.dirname(File.expand_path(__FILE__))
       @eturem_backtrace_locations = (self.backtrace_locations || []).reject do |location|
         File.expand_path(location.path).start_with?(this_dirpath) ||
-        location.path.end_with?("/rubygems/core_ext/kernel_require.rb")
+        location.path.end_with?(
+          "/rubygems/core_ext/kernel_require.rb",
+          "/rubygems/core_ext/kernel_require.rb"
+        )
       end
 
       program_filepath = File.expand_path(Eturem.program_name)
@@ -159,7 +162,7 @@ module Eturem
       "#{Regexp.last_match.post_match.chomp}\e[0m\n"
     end
 
-    def eturem_backtrace_str(order = :bottom)
+    def eturem_backtrace_str(order = :top)
       str = @eturem_backtrace_locations.empty? ? "" : eturem_traceback(order)
       str + (order == :top ? eturem_backtrace_str_top : eturem_backtrace_str_bottom)
     end
@@ -186,11 +189,8 @@ module Eturem
       Eturem::Base.script(@eturem_script_lines, @eturem_output_linenos, @eturem_lineno)
     end
 
-    def eturem_full_message(highlight: true, order: :bottom)
-      unless $stderr == STDERR && $stderr.tty?
-        highlight = false
-        order = :top
-      end
+    def eturem_full_message(highlight: true, order: :top)
+      highlight = false unless $stderr == STDERR && $stderr.tty?
 
       str = @@eturem_output_backtrace ? eturem_backtrace_str(order) : ""
       ext_message = eturem_message
